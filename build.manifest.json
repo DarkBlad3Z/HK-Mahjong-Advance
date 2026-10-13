@@ -1,0 +1,18 @@
+{
+  "template": "src/ui/index.html",
+  "css": ["src/ui/styles.css"],
+  "js": [
+    "src/core/tiles.js",
+    "src/core/rng.js",
+    "src/core/hand.js",
+    "src/core/scoring.js",
+    "src/core/engine.js",
+    "src/core/ai.js",
+    "src/ui/tile-art.js",
+    "src/ui/rules-content.js",
+    "src/ui/online.js",
+    "src/ui/render.js",
+    "src/ui/app.js"
+  ],
+  "output": "index.html"
+}
