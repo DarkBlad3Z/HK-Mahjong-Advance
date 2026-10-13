@@ -19,7 +19,8 @@ Play Hong Kong Mahjong in your browser against three computer players. Scoring f
 - Built-in rules reference, including the booklet's Fan combination tables
 - Settings: minimum Fan, game length, optional (†) hands, chicken-hand 雞糊 rule (booklet / always / never), computer difficulty, display size, tile highlighting, where new tiles go
 - Save and resume (stored in your browser's local storage)
-- Optional online scoreboard in a shared Google Sheet: sign in with a name and password, and every hand you win and game you finish is saved. In the game, **Leaderboard 排行榜** shows the rankings, a Hall of Fame, how often each player has won with Full Flush, All Terminals, Thirteen Orphans and other special hands, and your own games. Setup: [SCOREBOARD-SETUP.md](SCOREBOARD-SETUP.md)
+- Optional online scoreboard in a shared Google Sheet: sign in with a name and password, and every hand you play (win, loss or draw) and every game you finish is saved with the computer level. In the game, **Leaderboard 排行榜** shows the rankings (all games, or Easy / Normal / Hard only), games won–lost, hands won–lost–drawn and times dealt in, a Hall of Fame, how often each player has won with Full Flush, All Terminals, Thirteen Orphans and other special hands, and your own games and hands. Setup: [SCOREBOARD-SETUP.md](SCOREBOARD-SETUP.md)
+- Your Win or Loss is shown after every hand and at the end of every game
 
 ## How to play
 

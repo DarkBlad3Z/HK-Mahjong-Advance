@@ -498,6 +498,23 @@ button.tile { border: 1px solid rgba(0,0,0,0.15); }
 .hof-detail { font-size: 12px; color: #7a6f52; margin-top: 4px; }
 .mine-summary { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 15px; background: #fff; border: 1px solid var(--paper-border); border-radius: 8px; padding: 10px 12px; }
 .btn.btn-board { background: #274b3d; }
+
+/* ------------------------------------------------------------------ results by level, win / loss badges */
+.lb-levels { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 10px; }
+.lb-level { font: inherit; font-size: 13px; padding: 5px 13px; border-radius: 999px; border: 1.5px solid var(--paper-border); background: #fff; color: #3a3220; cursor: pointer; }
+.lb-level:hover { border-color: #1f5b45; }
+.lb-level.active { background: #1f5b45; border-color: #1f5b45; color: #fff; font-weight: 700; }
+.my-result { display: inline-block; margin: 0 0 10px; padding: 4px 16px; border-radius: 999px; font-weight: 800; font-size: 16px; letter-spacing: 0.01em; }
+.my-result-win { background: #1f7a4d; color: #fff; }
+.my-result-loss { background: #9b2c22; color: #fff; }
+.my-result-draw { background: #6b6249; color: #fff; }
+.gameover-modal .gameover-result { display: block; text-align: center; margin: 0 auto 12px; width: fit-content; }
+.res { display: inline-block; padding: 1px 9px; border-radius: 999px; font-weight: 700; font-size: 12px; white-space: nowrap; }
+.res-win { background: #d9f0e2; color: #1b5e3b; }
+.res-loss { background: #f7dcd8; color: #8c1d18; }
+.res-draw { background: #ece4cf; color: #5a5038; }
+.mine-levels { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 14px; color: #4d4430; margin: 10px 2px 2px; }
+.lb-table td.lb-left { min-width: 180px; }
 </style>
 </head>
 <body>
@@ -4657,21 +4674,23 @@ button.tile { border: 1px solid rgba(0,0,0,0.15); }
     return true;
   }
   var flushing = null, again = false, lastError = null;
-  /** Sends the signed-in player's queued records one by one; keeps them on network errors, drops ones the server rejects. */
+  /** Sends the signed-in player's queued records one by one; keeps them on network errors, drops ones the server rejects.
+   *  A record an older scoreboard script doesn't know yet (such as 'hand' before version 2) stays queued for later. */
   function flush() {
     if (flushing) { again = true; return flushing; }   // run once more when the current pass ends
     var s = session();
     if (!available() || !s) return Promise.resolve(0);
-    var sent = 0;
+    var sent = 0, later = {};
     function next() {
       var box = outbox(), idx = -1;
-      for (var i = 0; i < box.length; i++) if (box[i].user === s.username) { idx = i; break; }
+      for (var i = 0; i < box.length; i++) if (box[i].user === s.username && !later[box[i].id]) { idx = i; break; }
       if (idx < 0) return Promise.resolve(sent);
       var item = box[idx], body = {};
       Object.keys(item).forEach(function (k) { if (k !== 'user') body[k] = item[k]; });
       body.username = s.username; body.pw = s.pw;
       return post(body).then(function (res) {
         if (res && res.auth === false) { lastError = 'Please sign in again to save your scores.'; signOut(); return sent; }
+        if (res && res.ok === false && /^Unknown request/.test(String(res.error || ''))) { later[item.id] = true; return next(); }
         var now = outbox(), j = -1;
         for (var k = 0; k < now.length; k++) if (now[k].id === item.id) { j = k; break; }
         if (j >= 0) { now.splice(j, 1); write(OUTBOX_KEY, now); }
@@ -4695,6 +4714,7 @@ button.tile { border: 1px solid rgba(0,0,0,0.15); }
     return flush();
   }
   function recordWin(rec) { return record('win', rec); }
+  function recordHand(rec) { return record('hand', rec); }
   function recordGame(rec) { return record('game', rec); }
 
   function leaderboard() {
@@ -4707,7 +4727,7 @@ button.tile { border: 1px solid rgba(0,0,0,0.15); }
 
   HKMJ.Online = {
     available: available, url: url, user: user, signIn: signIn, signOut: signOut,
-    recordWin: recordWin, recordGame: recordGame, flush: flush, leaderboard: leaderboard,
+    recordWin: recordWin, recordHand: recordHand, recordGame: recordGame, flush: flush, leaderboard: leaderboard,
     pending: function () { var u = user(); return outbox().filter(function (i) { return i.user === u; }).length; },
     lastError: function () { return lastError; },
     onChange: function (fn) { listeners.push(fn); },
@@ -5288,6 +5308,11 @@ button.tile { border: 1px solid rgba(0,0,0,0.15); }
   }
 
   function fmtInt(n) { n = Math.round(Number(n) || 0); return (n < 0 ? '-' : '') + String(Math.abs(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+  function fmtShortDate(isoStr) {
+    var d = new Date(isoStr);
+    if (isNaN(d.getTime())) return '';
+    return ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()] + ' ' + d.getDate();
+  }
   function fmtDate(isoStr) {
     var d = new Date(isoStr);
     if (!isoStr || isNaN(d.getTime())) return '';
@@ -5296,18 +5321,57 @@ button.tile { border: 1px solid rgba(0,0,0,0.15); }
   }
   var LB_TABS = [['board', 'Leaderboard 排行榜'], ['hall', 'Hall of Fame 名人堂'], ['hands', 'Special hands 牌型'], ['mine', 'My games 我的']];
 
-  function lbBoard(d, me) {
-    var players = d.players || [];
-    if (!players.length) return '<p class="lb-empty">No players yet. Sign in, play a game, and you will be first on the board.</p>';
-    var head = ['#', 'Player', 'Games', '1st', 'Win rate', 'Total score', 'Average', 'Best game', 'Hands won', 'Self-picks', 'Biggest (Fan)', 'Limit hands'];
-    var rows = players.map(function (p) {
-      return '<tr class="' + (me && p.name.toLowerCase() === me.toLowerCase() ? 'lb-me' : '') + '"><td>' + p.rank + '</td><td class="lb-name">' + esc(p.name) + '</td>' +
-        '<td>' + p.games + '</td><td>' + p.firsts + '</td><td>' + Math.round((p.winRate || 0) * 100) + '%</td>' +
-        '<td class="lb-strong">' + fmtInt(p.totalScore) + '</td><td>' + fmtInt(p.avgScore) + '</td><td>' + fmtInt(p.bestGame) + '</td>' +
-        '<td>' + p.handsWon + '</td><td>' + p.selfPicks + '</td><td>' + (p.biggestFan || '') + '</td><td>' + (p.limitHands || '') + '</td></tr>';
+  var LB_LEVELS = [['all', 'All levels 全部'], ['easy', 'Easy 簡單'], ['normal', 'Normal 普通'], ['hard', 'Hard 困難']];
+  function pct(x) { return Math.round((Number(x) || 0) * 100) + '%'; }
+  function plus(n) { n = Number(n) || 0; return (n > 0 ? '+' : '') + fmtInt(n); }
+  function wl(w, l) { return (w || 0) + '–' + (l || 0); }
+  function wld(s) { return (s.handWins || 0) + '–' + (s.handsLost || 0) + '–' + (s.handsDrawn || 0); }
+  function levelName(level) { var l = LB_LEVELS.filter(function (x) { return x[0] === level; })[0]; return l ? l[1].split(' ')[0] : ''; }
+  /** True when the scoreboard script is version 2 or newer (it logs every hand and the computer level). */
+  function hasHandLog(d) { return (d.players || []).some(function (p) { return p.handsPlayed !== undefined; }); }
+  /** A player's numbers for one computer level; 'all' is every game. */
+  function statsAt(p, level) {
+    if (!level || level === 'all') return p;
+    var s = (p.byLevel && p.byLevel[level]) || {}, out = { name: p.name };
+    Object.keys(s).forEach(function (k) { out[k] = s[k]; });
+    return out;
+  }
+  function levelPills(level) {
+    return '<div class="lb-levels" role="group" aria-label="Computer level">' + LB_LEVELS.map(function (l) {
+      return '<button type="button" class="lb-level' + ((level || 'all') === l[0] ? ' active' : '') + '" data-action="leaderboard-level" data-level="' + l[0] + '"' +
+        ' aria-pressed="' + ((level || 'all') === l[0]) + '">' + l[1] + '</button>';
+    }).join('') + '</div>';
+  }
+
+  function lbBoard(d, me, level) {
+    level = level || 'all';
+    var pills = levelPills(level), v2 = hasHandLog(d);
+    if (level !== 'all' && !v2) {
+      return pills + '<p class="lb-empty">Results by computer level start once the scoreboard script is updated to version 2.</p>';
+    }
+    var list = (d.players || []).map(function (p) { return statsAt(p, level); });
+    if (level !== 'all') {
+      list = list.filter(function (s) { return s.games > 0 || s.handsPlayed > 0; });
+      list.sort(function (a, b) { return (b.totalScore - a.totalScore) || (b.firsts - a.firsts) || (b.handWins - a.handWins) || (a.name < b.name ? -1 : 1); });
+      list.forEach(function (s, i) { s.rank = i + 1; });
+    }
+    if (!list.length) {
+      return pills + '<p class="lb-empty">' + (level === 'all' ? 'No players yet. Sign in, play a game, and you will be first on the board.'
+        : 'Nobody has played against ' + levelName(level) + ' computer players yet.') + '</p>';
+    }
+    var head = ['#', 'Player', 'Games W–L', 'Win rate', 'Total score', 'Average', 'Best game', 'Hands W–L–D', 'Hand win %', 'Self-picks', 'Dealt in', 'Biggest (Fan)'];
+    var rows = list.map(function (s) {
+      var logged = s.handsPlayed !== undefined, none = '–';
+      return '<tr class="' + (me && s.name.toLowerCase() === me.toLowerCase() ? 'lb-me' : '') + '"><td>' + s.rank + '</td><td class="lb-name">' + esc(s.name) + '</td>' +
+        '<td>' + wl(s.firsts, (s.games || 0) - (s.firsts || 0)) + '</td><td>' + pct(s.winRate) + '</td>' +
+        '<td class="lb-strong">' + fmtInt(s.totalScore) + '</td><td>' + fmtInt(s.avgScore) + '</td><td>' + fmtInt(s.bestGame) + '</td>' +
+        '<td>' + (logged ? wld(s) : none) + '</td><td>' + (logged ? pct(s.handWinRate) : none) + '</td>' +
+        '<td>' + (s.selfPicks || 0) + '</td><td>' + (logged ? (s.dealtIn || 0) : none) + '</td><td>' + (s.biggestFan || '') + '</td></tr>';
     }).join('');
-    return '<div class="lb-scroll"><table class="lb-table"><thead><tr>' + head.map(function (h) { return '<th>' + h + '</th>'; }).join('') +
-      '</tr></thead><tbody>' + rows + '</tbody></table></div><p class="lb-foot">Ranked by total score across all saved games.</p>';
+    var foot = (level === 'all' ? 'All games, ranked by total score.' : 'Games against ' + levelName(level) + ' computer players, ranked by total score.') +
+      ' A game is a win when you finish 1st. Hands W–L–D: hands won, lost and drawn. Dealt in: hands lost on your discard.';
+    return pills + '<div class="lb-scroll"><table class="lb-table"><thead><tr>' + head.map(function (h) { return '<th>' + h + '</th>'; }).join('') +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div><p class="lb-foot">' + foot + '</p>';
   }
   // "1 games" -> "1 game"; Fan stays as it is
   function unitFor(value, unit) {
@@ -5349,21 +5413,45 @@ button.tile { border: 1px solid rgba(0,0,0,0.15); }
     var t = n % 100, suf = (t >= 11 && t <= 13) ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
     return n + suf;
   }
+  function resultTag(res) {
+    var k = /^win/i.test(res) ? 'win' : /^(loss|dealt)/i.test(res) ? 'loss' : 'draw';
+    return '<span class="res res-' + k + '">' + esc(res || '') + '</span>';
+  }
   function lbMine(d, me) {
     if (!me) return '<p class="lb-empty">Sign in to see your own games here. <button type="button" class="link-btn" data-action="open-login">Sign in</button></p>';
     var p = (d.players || []).filter(function (x) { return x.name.toLowerCase() === me.toLowerCase(); })[0];
-    var summary = p ? '<div class="mine-summary"><span>Rank <strong>#' + p.rank + '</strong></span><span>Games <strong>' + p.games + '</strong></span>' +
-      '<span>1st places <strong>' + p.firsts + '</strong></span><span>Total <strong>' + fmtInt(p.totalScore) + '</strong></span>' +
-      '<span>Hands won <strong>' + p.handsWon + '</strong></span><span>Biggest <strong>' + (p.biggestFan || 0) + ' Fan</strong></span></div>' : '';
+    var v2 = hasHandLog(d);
+    var summary = p ? '<div class="mine-summary"><span>Rank <strong>#' + p.rank + '</strong></span>' +
+      '<span>Games W–L <strong>' + wl(p.firsts, p.games - p.firsts) + '</strong></span>' +
+      (v2 ? '<span>Hands W–L–D <strong>' + wld(p) + '</strong></span><span>Dealt in <strong>' + (p.dealtIn || 0) + '</strong></span>'
+        : '<span>Hands won <strong>' + p.handsWon + '</strong></span>') +
+      '<span>Total <strong>' + fmtInt(p.totalScore) + '</strong></span>' +
+      '<span>Biggest <strong>' + (p.biggestFan || 0) + ' Fan</strong></span></div>' : '';
+    var levels = (p && p.byLevel) ? '<div class="mine-levels">' + LB_LEVELS.slice(1).map(function (l) {
+      var s = p.byLevel[l[0]] || {};
+      return '<span><strong>' + levelName(l[0]) + '</strong> games ' + wl(s.firsts, (s.games || 0) - (s.firsts || 0)) + ' · hands ' + wld(s) + '</span>';
+    }).join('') + '</div>' : '';
     var games = (d.myGames || []).map(function (g) {
-      return '<tr><td>' + fmtDate(g.time) + '</td><td>' + ordinal(g.place) + '</td><td class="lb-strong">' + fmtInt(g.score) + '</td><td>' + g.handsWon + ' of ' + g.hands + '</td></tr>';
+      return '<tr><td>' + fmtDate(g.time) + '</td><td>' + esc(g.level || '') + '</td><td>' + ordinal(g.place) + '</td><td>' +
+        resultTag(g.result || (g.place === 1 ? 'Win' : 'Loss')) + '</td><td class="lb-strong">' + fmtInt(g.score) + '</td><td>' + g.handsWon + ' of ' + g.hands + '</td></tr>';
+    }).join('');
+    var hands = (d.myHands || []).map(function (h) {
+      var who = String(h.winner || 'Someone').replace(/ \(computer\)$/, '');
+      var how = h.how === 'Self-pick' ? ' by self-pick' : h.how === 'Discard' ? (h.dealtIn ? ' on your discard' : ' on a discard') : h.how ? ' by ' + h.how.toLowerCase() : '';
+      var detail = h.result === 'Win' ? (h.scoring || h.how) : h.result === 'Loss' ? who + ' won' + how + (h.scoring ? ' · ' + h.scoring : '') : 'Nobody won';
+      return '<tr><td>' + fmtShortDate(h.time) + '</td><td>' + esc(h.level || '') + '</td><td>' + resultTag(h.dealtIn ? 'Dealt in' : h.result) + '</td><td>' +
+        (h.result === 'Draw' ? '' : h.fan) + '</td><td class="lb-strong">' + plus(h.points) + '</td><td class="lb-left">' + esc(detail) + '</td></tr>';
     }).join('');
     var wins = (d.myWins || []).map(function (w) {
-      return '<tr><td>' + fmtDate(w.time) + '</td><td>' + w.fan + '</td><td>' + esc(w.how) + '</td><td class="lb-left">' + esc(w.scoring) + '</td></tr>';
+      return '<tr><td>' + fmtDate(w.time) + '</td><td>' + esc(w.level || '') + '</td><td>' + w.fan + '</td><td>' + esc(w.how) + '</td><td class="lb-left">' + esc(w.scoring) + '</td></tr>';
     }).join('');
-    return summary +
-      '<h3 class="lb-sub">Recent games</h3>' + (games ? '<table class="lb-table"><thead><tr><th>Date</th><th>Place</th><th>Score</th><th>Hands won</th></tr></thead><tbody>' + games + '</tbody></table>' : '<p class="lb-empty">No finished games yet.</p>') +
-      '<h3 class="lb-sub">Recent wins</h3>' + (wins ? '<table class="lb-table"><thead><tr><th>Date</th><th>Fan</th><th>How</th><th class="lb-left">Scoring</th></tr></thead><tbody>' + wins + '</tbody></table>' : '<p class="lb-empty">No wins yet.</p>');
+    return summary + levels +
+      '<h3 class="lb-sub">Recent games</h3>' + (games ? '<table class="lb-table"><thead><tr><th>Date</th><th>Level</th><th>Place</th><th>Result</th><th>Score</th><th>Hands won</th></tr></thead><tbody>' + games + '</tbody></table>'
+        : '<p class="lb-empty">No finished games yet.</p>') +
+      (v2 ? '<h3 class="lb-sub">Recent hands</h3>' + (hands ? '<table class="lb-table"><thead><tr><th>Date</th><th>Level</th><th>Result</th><th>Fan</th><th>Points</th><th class="lb-left">What happened</th></tr></thead><tbody>' + hands + '</tbody></table>'
+        : '<p class="lb-empty">No hands yet.</p>') : '') +
+      '<h3 class="lb-sub">Recent wins</h3>' + (wins ? '<table class="lb-table"><thead><tr><th>Date</th><th>Level</th><th>Fan</th><th>How</th><th class="lb-left">Scoring</th></tr></thead><tbody>' + wins + '</tbody></table>'
+        : '<p class="lb-empty">No wins yet.</p>');
   }
   function renderLeaderboardModal(m, online) {
     var me = online && online.user;
@@ -5373,7 +5461,7 @@ button.tile { border: 1px solid rgba(0,0,0,0.15); }
     else if (m.error && !m.data) body = '<div class="login-error" role="alert">' + esc(m.error) + '</div>';
     else {
       var d = m.data || {};
-      body = m.tab === 'hall' ? lbHall(d) : m.tab === 'hands' ? lbHands(d, me) : m.tab === 'mine' ? lbMine(d, me) : lbBoard(d, me);
+      body = m.tab === 'hall' ? lbHall(d) : m.tab === 'hands' ? lbHands(d, me) : m.tab === 'mine' ? lbMine(d, me) : lbBoard(d, me, m.level);
     }
     return '<div class="modal-overlay"><div class="modal leaderboard-modal" data-role="leaderboard-modal">' +
       '<div class="modal-head"><h2 class="modal-title">Scoreboard 計分榜</h2><button type="button" class="btn btn-icon" data-action="close-modal">✕</button></div>' +
@@ -5611,6 +5699,15 @@ button.tile { border: 1px solid rgba(0,0,0,0.15); }
         (fl ? '<span class="revealed-flowers">' + fl + '</span>' : '') + '</div>';
     }).join('') + '</div>';
   }
+  /** Your own result for the hand, shown under the title: Win / Loss (and whether you dealt in) with your points. */
+  function myHandResult(view) {
+    var r = view.result;
+    if (!r || r.type === 'draw') return '<div class="my-result my-result-draw">Draw 和 · nobody won</div>';
+    var pts = (r.payments || [])[0] || 0;
+    if (r.winner === 0) return '<div class="my-result my-result-win">Win 贏 · ' + esc(signed(pts)) + '</div>';
+    var dealt = r.payer === 0 && (r.source === 'discard' || r.source === 'robKong');
+    return '<div class="my-result my-result-loss">Loss 輸' + (dealt ? ' · you dealt in' : '') + (pts ? ' · ' + esc(signed(pts)) : '') + '</div>';
+  }
   function renderHandResult(view) {
     var r = view.result;
     var title = resultTitle(view);
@@ -5618,7 +5715,7 @@ button.tile { border: 1px solid rgba(0,0,0,0.15); }
       ? ('<div class="result-sub">' + esc(title.sub) + '</div>' + revealedHandsRow(view))
       : (winningHandDisplay(view) + fanTable(r.evaluation) + paymentLines(view) + scoresAfterRow(view) + revealedHandsRow(view));
     return '<div class="modal-overlay"><div class="modal result-modal">' +
-      '<h2 class="modal-title">' + esc(title.en) + ' <span class="zh">' + esc(title.zh) + '</span></h2>' +
+      '<h2 class="modal-title">' + esc(title.en) + ' <span class="zh">' + esc(title.zh) + '</span></h2>' + myHandResult(view) +
       body + nextDealLine(view) +
       '<div class="modal-actions"><button type="button" class="btn btn-brass" data-action="next-hand">Next hand 下一局</button></div>' +
       '</div></div>';
@@ -5636,8 +5733,12 @@ button.tile { border: 1px solid rgba(0,0,0,0.15); }
       return '<div class="standing-row' + (s.index === 0 ? ' is-you' : '') + '"><span class="standing-rank">#' + s.rank + '</span>' +
         '<span class="standing-name">' + esc(s.index === 0 ? 'You' : s.name) + '</span><span class="standing-score">' + s.score + '</span></div>';
     }).join('');
+    var mine = standings.filter(function (s) { return s.index === 0; })[0];
+    var headline = !mine ? '' : (mine.rank === 1
+      ? '<div class="my-result my-result-win gameover-result">Win 贏 · you finished 1st</div>'
+      : '<div class="my-result my-result-loss gameover-result">Loss 輸 · you finished ' + ordinal(mine.rank) + '</div>');
     return '<div class="modal-overlay"><div class="modal gameover-modal">' +
-      '<h2 class="modal-title">Game Over 結束</h2>' +
+      '<h2 class="modal-title">Game Over 結束</h2>' + headline +
       '<div class="standings">' + rows + '</div>' + saved +
       '<div class="modal-actions"><button type="button" class="btn btn-brass" data-action="request-new-game">New Game 新局</button></div>' +
       '</div></div>';
@@ -6089,7 +6190,7 @@ button.tile { border: 1px solid rgba(0,0,0,0.15); }
       addCallout(evt.player, chicken ? '雞糊! 🐔' : calloutTextForWin(evt.result));
       trackWin(evt);
     }
-    else if (evt.type === 'handEnd') trackHandEnd();
+    else if (evt.type === 'handEnd') trackHandEnd(evt);
     else if (evt.type === 'gameEnd') trackGameEnd(evt);
     else if (evt.type === 'blockedWin' && evt.player === 0) {
       var tileName = (evt.tile != null && HKMJ.Tiles) ? (HKMJ.Tiles.name(evt.tile) + ' ' + HKMJ.Tiles.zh(evt.tile) + ' completes your hand, but') : 'Winning shape, but';
@@ -6098,8 +6199,9 @@ button.tile { border: 1px solid rgba(0,0,0,0.15); }
     }
   }
   // ------------------------------------------------------------------ online scoreboard (src/ui/online.js)
-  // Each game gets an id and running counts (kept with the save, so Continue resumes them). Wins by you and the final
-  // result are sent to the scoreboard when you are signed in; debug autoplay never records anything.
+  // Each game gets an id and running counts (kept with the save, so Continue resumes them). When you are signed in,
+  // every hand you play (win, loss or draw), the scoring of each hand you win, and the final result are sent to the
+  // scoreboard with the game's computer level; debug autoplay never records anything.
   var META_KEY = 'hkmj.gameMeta.v1', gameMeta = null;
   function newGameMeta() {
     return { gameId: 'g' + Date.now().toString(36) + Math.floor(Math.random() * 1e8).toString(36), hands: 0, handsWon: 0, selfPicks: 0, biggestFan: 0, recorded: false };
@@ -6121,9 +6223,33 @@ button.tile { border: 1px solid rgba(0,0,0,0.15); }
     var O = onlineApi();
     if (!O || !O.user()) return;
     O.recordWin({ gameId: gameMeta.gameId, handNo: r.handNo, fan: fan, points: (r.payments || [])[0] || 0, source: r.source,
-      items: (ev.items || []).map(function (i) { return { id: i.id, name: i.name, fan: i.fan }; }), chicken: isChickenHand(r) });
+      items: scoringItems(ev), chicken: isChickenHand(r), aiLevel: gameLevel() });
   }
-  function trackHandEnd() { if (!gameMeta || autoplayOn) return; gameMeta.hands++; saveMeta(); }
+  function scoringItems(ev) { return ((ev && ev.items) || []).map(function (i) { return { id: i.id, name: i.name, fan: i.fan }; }); }
+  /** The computer level this game is played at (the engine keeps it fixed for the whole game). */
+  function gameLevel() {
+    try { var v = G && G.getView(0); if (v && v.settings && v.settings.aiLevel) return v.settings.aiLevel; } catch (e) { /* fall through */ }
+    return (state.settings && state.settings.aiLevel) || 'normal';
+  }
+  /** Win, loss or draw for you, from a hand's result (the 'handEnd' event). */
+  function handOutcome(r) {
+    if (!r || r.type === 'draw' || r.winner === null || r.winner === undefined) return { result: 'draw', dealtIn: false };
+    if (r.winner === 0) return { result: 'win', dealtIn: false };
+    return { result: 'loss', dealtIn: r.payer === 0 && (r.source === 'discard' || r.source === 'robKong') };
+  }
+  function trackHandEnd(evt) {
+    if (!gameMeta || autoplayOn) return;
+    gameMeta.hands++; saveMeta();
+    var O = onlineApi();
+    if (!O || !O.user()) return;
+    var r = (evt && evt.result) || {}, out = handOutcome(r), winner = '';
+    if (out.result === 'loss') {
+      try { winner = G.getView(0).players[r.winner].name + ' (computer)'; } catch (e) { winner = 'Computer'; }
+    }
+    O.recordHand({ gameId: gameMeta.gameId, handNo: r.handNo, result: out.result, dealtIn: out.dealtIn, winner: winner,
+      source: r.source, fan: r.fan || (r.evaluation && r.evaluation.fan) || 0, points: (r.payments || [])[0] || 0,
+      items: out.result === 'draw' ? [] : scoringItems(r.evaluation), aiLevel: gameLevel() });
+  }
   function trackGameEnd(evt) {
     if (!gameMeta || autoplayOn || gameMeta.recorded) return;
     var me = (evt.standings || []).filter(function (s) { return s.index === 0; })[0];
@@ -6133,10 +6259,11 @@ button.tile { border: 1px solid rgba(0,0,0,0.15); }
     if (!O || !O.user()) return;
     var set = {}; try { set = G.getView(0).settings || {}; } catch (e) { set = state.settings || {}; }
     O.recordGame({ gameId: gameMeta.gameId, score: me.score, place: me.rank, hands: gameMeta.hands, handsWon: gameMeta.handsWon,
-      selfPicks: gameMeta.selfPicks, biggestFan: gameMeta.biggestFan, minFan: set.minFan, rounds: set.rounds, aiLevel: set.aiLevel });
+      selfPicks: gameMeta.selfPicks, biggestFan: gameMeta.biggestFan, minFan: set.minFan, rounds: set.rounds, aiLevel: set.aiLevel || gameLevel() });
   }
+  var boardLevel = 'all';   // the Easy / Normal / Hard filter is remembered while the app is open
   function openLeaderboard(tab) {
-    state.modal = { type: 'leaderboard', tab: tab || 'board', loading: true, data: null, error: null };
+    state.modal = { type: 'leaderboard', tab: tab || 'board', level: boardLevel, loading: true, data: null, error: null };
     render();
     loadLeaderboard();
   }
@@ -6222,8 +6349,9 @@ button.tile { border: 1px solid rgba(0,0,0,0.15); }
     catch (e) { console.error('HKMJ: getView/getActions failed', e); return; }
     if (!actions.length) return;
     // Player 0 only ever reaches here under debug autoplay (see HKMJ.App.debug below); it always decides at
-    // the fixed 'normal' level, independent of the configured aiLevel used for the three computer players.
-    var level = (p === 0) ? 'normal' : state.settings.aiLevel;
+    // the fixed 'normal' level. The computer players use the game's level, which stays the same for the whole game
+    // (a level changed in Settings starts with the next game), so the scoreboard's Easy / Normal / Hard is exact.
+    var level = (p === 0) ? 'normal' : ((view.settings && view.settings.aiLevel) || state.settings.aiLevel);
     try { action = HKMJ.AI.decide(view, actions, { level: level }); }
     catch (e) { console.error('HKMJ: AI.decide failed', e); action = safeFallback(actions); }
     try { res = G.act(p, action); } catch (e) { res = { ok: false, error: String(e) }; }
@@ -6549,6 +6677,9 @@ button.tile { border: 1px solid rgba(0,0,0,0.15); }
       case 'open-leaderboard': openLeaderboard('board'); return;
       case 'leaderboard-tab': if (state.modal && state.modal.type === 'leaderboard') { state.modal.tab = el.getAttribute('data-tab'); render(); } return;
       case 'leaderboard-refresh': if (state.modal && state.modal.type === 'leaderboard') { state.modal.loading = true; render(); loadLeaderboard(); } return;
+      case 'leaderboard-level':
+        if (state.modal && state.modal.type === 'leaderboard') { boardLevel = state.modal.level = el.getAttribute('data-level') || 'all'; render(); }
+        return;
       case 'settings-save': {
         var draft = state.modal.draft;
         if (state.modal.forNewGame) { startNewGame(draft); return; }

@@ -146,21 +146,23 @@
     return true;
   }
   var flushing = null, again = false, lastError = null;
-  /** Sends the signed-in player's queued records one by one; keeps them on network errors, drops ones the server rejects. */
+  /** Sends the signed-in player's queued records one by one; keeps them on network errors, drops ones the server rejects.
+   *  A record an older scoreboard script doesn't know yet (such as 'hand' before version 2) stays queued for later. */
   function flush() {
     if (flushing) { again = true; return flushing; }   // run once more when the current pass ends
     var s = session();
     if (!available() || !s) return Promise.resolve(0);
-    var sent = 0;
+    var sent = 0, later = {};
     function next() {
       var box = outbox(), idx = -1;
-      for (var i = 0; i < box.length; i++) if (box[i].user === s.username) { idx = i; break; }
+      for (var i = 0; i < box.length; i++) if (box[i].user === s.username && !later[box[i].id]) { idx = i; break; }
       if (idx < 0) return Promise.resolve(sent);
       var item = box[idx], body = {};
       Object.keys(item).forEach(function (k) { if (k !== 'user') body[k] = item[k]; });
       body.username = s.username; body.pw = s.pw;
       return post(body).then(function (res) {
         if (res && res.auth === false) { lastError = 'Please sign in again to save your scores.'; signOut(); return sent; }
+        if (res && res.ok === false && /^Unknown request/.test(String(res.error || ''))) { later[item.id] = true; return next(); }
         var now = outbox(), j = -1;
         for (var k = 0; k < now.length; k++) if (now[k].id === item.id) { j = k; break; }
         if (j >= 0) { now.splice(j, 1); write(OUTBOX_KEY, now); }
@@ -184,6 +186,7 @@
     return flush();
   }
   function recordWin(rec) { return record('win', rec); }
+  function recordHand(rec) { return record('hand', rec); }
   function recordGame(rec) { return record('game', rec); }
 
   function leaderboard() {
@@ -196,7 +199,7 @@
 
   HKMJ.Online = {
     available: available, url: url, user: user, signIn: signIn, signOut: signOut,
-    recordWin: recordWin, recordGame: recordGame, flush: flush, leaderboard: leaderboard,
+    recordWin: recordWin, recordHand: recordHand, recordGame: recordGame, flush: flush, leaderboard: leaderboard,
     pending: function () { var u = user(); return outbox().filter(function (i) { return i.user === u; }).length; },
     lastError: function () { return lastError; },
     onChange: function (fn) { listeners.push(fn); },

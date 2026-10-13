@@ -13,14 +13,17 @@ function ok(c, label) { if (c) passes++; else { fails++; console.log('FAIL ' + l
 
 var server = require('./_stubs/gas.js').makeServer();
 var URL = 'https://script.google.com/macros/s/AKfycbx_TEST-123/exec';
-var online = true, requests = 0;
+var online = true, oldServer = false, requests = 0;
 var mem = {};
 global.localStorage = { getItem: function (k) { return Object.prototype.hasOwnProperty.call(mem, k) ? mem[k] : null; }, setItem: function (k, v) { mem[k] = String(v); }, removeItem: function (k) { delete mem[k]; } };
 global.fetch = function (url, opts) {
   requests++;
   if (!online) return Promise.reject(new TypeError('Failed to fetch'));
   var body;
-  if (opts && opts.method === 'POST') body = server.doPost(opts.body);
+  if (opts && opts.method === 'POST') {
+    // oldServer: a version 1 scoreboard script, which doesn't know the 'hand' record yet
+    body = (oldServer && JSON.parse(opts.body).action === 'hand') ? { ok: false, error: 'Unknown request.' } : server.doPost(opts.body);
+  }
   else {
     var q = {}; String(url).split('?')[1].split('&').forEach(function (kv) { var p = kv.split('='); q[decodeURIComponent(p[0])] = decodeURIComponent(p[1] || ''); });
     body = server.doGet(q);
@@ -71,6 +74,19 @@ function expectReject(p, re, label) {
   ok(await O.flush() === 2 && rowsOf('Wins') === 2 && rowsOf('Games') === 1 && O.pending() === 0, 'back online: both sent in order');
   ok(await O.flush() === 0, 'nothing left to send');
 
+  // every hand, win or not; and an older scoreboard script that doesn't know hands yet keeps them queued
+  await O.recordHand({ gameId: 'g1', handNo: 2, result: 'loss', dealtIn: true, winner: 'Pat (computer)', source: 'discard', fan: 5, points: -32,
+    items: [{ id: 'mixedFlush', name: 'Mixed Flush', fan: 3 }, { id: 'dragon', name: 'Dragon Pung', fan: 2 }], aiLevel: 'hard' });
+  var HS = server.book.getSheetByName('Hands');
+  ok(rowsOf('Hands') === 1 && HS.get(2, 5) === 'Loss' && HS.get(2, 6) === 'Yes' && HS.get(2, 10) === -32 && HS.get(2, 11) === 'Hard' && HS.get(2, 12) === 'Mixed Flush 3, Dragon Pung 2',
+    'a lost hand is saved with who won, the points and the level');
+  oldServer = true;
+  await O.recordHand({ gameId: 'g1', handNo: 3, result: 'draw', points: 0, aiLevel: 'hard' });
+  await O.recordWin({ gameId: 'g1', handNo: 5, fan: 3, points: 16, source: 'discard', items: [{ id: 'allTriplets', name: 'All Triplets', fan: 3 }], aiLevel: 'hard' });
+  ok(O.pending() === 1 && rowsOf('Hands') === 1 && rowsOf('Wins') === 3, 'old script: the hand waits in the outbox, the win still goes through');
+  oldServer = false;
+  ok(await O.flush() === 1 && O.pending() === 0 && rowsOf('Hands') === 2 && HS.get(3, 5) === 'Draw', 'after the script is updated the waiting hand is sent');
+
   // a second player; records queued under one name wait for that player
   O.signOut();
   ok(await O.recordWin({ gameId: 'g2', handNo: 1, fan: 3 }) === 0 && O.pending() === 0, 'signed out: nothing recorded');
@@ -84,7 +100,7 @@ function expectReject(p, re, label) {
   O.signOut();
   await O.signIn('login', 'Bel', 'bel');
   await O.flush();
-  ok(JSON.parse(mem['hkmj.outbox.v1']).length === 0 && rowsOf('Wins') === 3, "Bel's win goes up when Bel signs in");
+  ok(JSON.parse(mem['hkmj.outbox.v1']).length === 0 && rowsOf('Wins') === 4, "Bel's win goes up when Bel signs in");
 
   // a stale session (password reset by the owner) signs you out instead of losing the record silently
   server.sandbox.resetPassword('Bel');
@@ -94,7 +110,9 @@ function expectReject(p, re, label) {
   // leaderboard
   await O.signIn('login', 'Julie', 'tea');
   var lb = await O.leaderboard();
-  ok(lb.players[0].name === 'Julie' && lb.players[0].handsWon === 2 && lb.players[0].limitHands === 1 && lb.myWins.length === 2, 'leaderboard data for the signed-in player');
+  ok(lb.players[0].name === 'Julie' && lb.players[0].handsWon === 3 && lb.players[0].limitHands === 1 && lb.myWins.length === 3, 'leaderboard data for the signed-in player');
+  ok(lb.players[0].handsPlayed === 2 && lb.players[0].handsLost === 1 && lb.players[0].handsDrawn === 1 && lb.players[0].dealtIn === 1 &&
+    lb.players[0].byLevel.hard.handsPlayed === 2 && lb.myHands.length === 2, 'hands W-L-D and by level');
   online = false;
   await expectReject(O.leaderboard(), /internet/, 'leaderboard offline');
   online = true;
@@ -108,6 +126,16 @@ function expectReject(p, re, label) {
     ok(h.indexOf('undefined') < 0 && h.indexOf('NaN') < 0, t + ' tab renders cleanly');
   });
   ok(/Thirteen Orphans/.test(UI.renderRoot({ screen: 'start', online: onlineState, modal: { type: 'leaderboard', tab: 'hall', data: lb } })), 'hall of fame lists the Thirteen Orphans');
+  function board(level, data) { return UI.renderRoot({ screen: 'start', online: onlineState, modal: { type: 'leaderboard', tab: 'board', level: level, data: data || lb } }); }
+  ok(/lb-level active[^>]*data-level="all"/.test(board()) && /1–0/.test(board()) && /1–1–0|0–1–1/.test(board()), 'all levels: games W–L and hands W–L–D: ' + (board().match(/<td>\d+–\d+–\d+<\/td>/) || [''])[0]);
+  ok(/data-level="normal"[^>]*aria-pressed="true"/.test(board('normal')) && /Julie/.test(board('normal')) && /Games against Normal computer players/.test(board('normal')), 'Normal filter');
+  ok(/Nobody has played against Easy computer players yet/.test(board('easy')), 'empty level');
+  var hardRow = (board('hard').match(/<tr class="lb-me">.*?<\/tr>/) || [''])[0];
+  ok(/<td>0–0<\/td>/.test(hardRow) && /<td>0–1–1<\/td>/.test(hardRow), 'Hard: hands but no finished game: ' + hardRow.replace(/<[^>]+>/g, ' '));
+  var oldData = JSON.parse(JSON.stringify(lb)); oldData.players.forEach(function (p) { delete p.handsPlayed; delete p.byLevel; });
+  ok(/updated to version 2/.test(board('hard', oldData)) && /<td>–<\/td>/.test(board('all', oldData)), 'a version 1 scoreboard: no level data, hands columns blank');
+  var mine = UI.renderRoot({ screen: 'start', online: onlineState, modal: { type: 'leaderboard', tab: 'mine', data: lb } });
+  ok(/Recent hands/.test(mine) && /res-loss">Dealt in/.test(mine) && /Pat won on your discard · Mixed Flush 3/.test(mine) && /mine-levels/.test(mine), 'My games: recent hands with results');
   ok(/Loading/.test(UI.renderRoot({ screen: 'start', online: onlineState, modal: { type: 'leaderboard', tab: 'board', loading: true } })), 'loading state');
   var evil = { players: [{ name: '<img src=x onerror=alert(1)>', rank: 1, games: 1, firsts: 0, winRate: 0, totalScore: 0, avgScore: 0, bestGame: 0, handsWon: 0, selfPicks: 0, biggestFan: 0, limitHands: 0, hands: {} }] };
   ok(UI.renderRoot({ screen: 'start', online: onlineState, modal: { type: 'leaderboard', tab: 'board', data: evil } }).indexOf('<img') < 0, 'names are escaped');

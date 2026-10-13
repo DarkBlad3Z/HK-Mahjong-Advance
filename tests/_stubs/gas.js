@@ -1,6 +1,10 @@
 /* HK Mahjong — tests/_stubs/gas.js
  * Small fakes of the Google Apps Script services used by server/scoreboard.gs (SpreadsheetApp, PropertiesService,
  * LockService, ContentService, Utilities), and makeServer() which loads the script into a fresh VM context.
+ *   makeServer({ file, book, props, noActive })
+ *     file      script to load (default server/scoreboard.gs), e.g. an older version to test upgrades
+ *     book/props reuse the spreadsheet and Script Properties of another server (same sheet, new script version)
+ *     noActive  behave like a web app, where getActiveSpreadsheet() gives nothing
  */
 'use strict';
 var fs = require('fs'), path = require('path'), vm = require('vm'), crypto = require('crypto');
@@ -26,13 +30,20 @@ function makeServer(opts) {
     for (var i = 0; i < this.nr; i++) { var row = []; for (var j = 0; j < this.nc; j++) row.push(this.s.get(this.r + i, this.c + j)); out.push(row); }
     return out;
   };
-  function a1(ref) {   // 'B2' -> [2, 2]; 'B:C' / 'A:A' -> whole columns (formatting only)
+  function colNum(L) { var c = 0; for (var i = 0; i < L.length; i++) c = c * 26 + (L.charCodeAt(i) - 64); return c; }
+  function a1(ref) {   // 'B2' -> [2, 2]; 'B:C' / 'A:A' -> whole columns [0, firstCol, lastCol] (formatting only)
     var m = /^([A-Z]+)(\d+)$/.exec(ref);
-    if (!m) return null;
-    var col = 0; for (var i = 0; i < m[1].length; i++) col = col * 26 + (m[1].charCodeAt(i) - 64);
-    return [+m[2], col];
+    if (m) return [+m[2], colNum(m[1])];
+    var c = /^([A-Z]+):([A-Z]+)$/.exec(ref);
+    return c ? [0, colNum(c[1]), colNum(c[2])] : null;
   }
-  function Sheet(name) { this.name = name; this.cells = {}; this.maxR = 0; this.maxC = 0; this.frozen = 0; }
+  // Like a real tab: 1000 rows x 26 columns until the script adds more; ranges outside that throw.
+  function Sheet(name) { this.name = name; this.cells = {}; this.maxR = 0; this.maxC = 0; this.frozen = 0; this.rowsN = 1000; this.colsN = 26; }
+  function outside() { throw new Error('Exception: The coordinates of the range are outside the dimensions of the sheet.'); }
+  Sheet.prototype.getMaxRows = function () { return this.rowsN; };
+  Sheet.prototype.getMaxColumns = function () { return this.colsN; };
+  Sheet.prototype.insertColumnsAfter = function (after, n) { if (after < 1 || after > this.colsN || n < 1) outside(); this.colsN += n; return this; };
+  Sheet.prototype.insertRowsAfter = function (after, n) { if (after < 1 || after > this.rowsN || n < 1) outside(); this.rowsN += n; return this; };
   Sheet.prototype.set = function (r, c, v) {
     if (v === '' || v === null || v === undefined) delete this.cells[r + ',' + c]; else this.cells[r + ',' + c] = v;
     this.recompute();
@@ -46,23 +57,42 @@ function makeServer(opts) {
   Sheet.prototype.getLastRow = function () { return this.maxR; };
   Sheet.prototype.getLastColumn = function () { return this.maxC; };
   Sheet.prototype.getRange = function (r, c, nr, nc) {
-    if (typeof r === 'string') { var p = a1(r); return p ? new Range(this, p[0], p[1], 1, 1) : new Range(this, 1, 1, 0, 0); }
-    return new Range(this, r, c, nr || 1, nc || 1);
+    if (typeof r === 'string') {
+      var p = a1(r);
+      if (!p) throw new Error('Range not found: ' + r);
+      if (p[0] === 0) { if (p[2] > this.colsN) outside(); return new Range(this, 1, 1, 0, 0); }
+      if (p[0] > this.rowsN || p[1] > this.colsN) outside();
+      return new Range(this, p[0], p[1], 1, 1);
+    }
+    if (nr === undefined) nr = 1;
+    if (nc === undefined) nc = 1;
+    if (r < 1 || c < 1 || nr < 1 || nc < 1 || r + nr - 1 > this.rowsN || c + nc - 1 > this.colsN) outside();
+    return new Range(this, r, c, nr, nc);
   };
-  Sheet.prototype.appendRow = function (vals) { var r = this.maxR + 1; for (var j = 0; j < vals.length; j++) this.set(r, j + 1, vals[j]); };
+  Sheet.prototype.appendRow = function (vals) {
+    var r = this.maxR + 1;
+    if (r > this.rowsN) this.rowsN = r;               // appendRow grows the sheet
+    if (vals.length > this.colsN) this.colsN = vals.length;
+    for (var j = 0; j < vals.length; j++) this.set(r, j + 1, vals[j]);
+  };
   Sheet.prototype.setFrozenRows = function (n) { this.frozen = n; };
   Sheet.prototype.setFrozenColumns = function () {};
   Sheet.prototype.setColumnWidth = function () {};
   Sheet.prototype.setColumnWidths = function () {};
+  Sheet.prototype.clear = function () { this.cells = {}; this.recompute(); return this; };
 
-  var book = { sheets: [new Sheet('Sheet1')] };
-  book.getSheetByName = function (n) { return this.sheets.filter(function (s) { return s.name === n; })[0] || null; };
-  book.insertSheet = function (n) { var s = new Sheet(n); this.sheets.push(s); return s; };
-  book.deleteSheet = function (s) { this.sheets = this.sheets.filter(function (x) { return x !== s; }); };
-  book.getSheets = function () { return this.sheets.slice(); };
-  book.getId = function () { return '1TestSheetId'; };
+  // A reused book keeps the methods (and Sheet class) of the server that made it; they are the same code.
+  var book = opts.book;
+  if (!book) {
+    book = { sheets: [new Sheet('Sheet1')] };
+    book.getSheetByName = function (n) { return this.sheets.filter(function (s) { return s.name === n; })[0] || null; };
+    book.insertSheet = function (n) { var s = new Sheet(n); this.sheets.push(s); return s; };
+    book.deleteSheet = function (s) { this.sheets = this.sheets.filter(function (x) { return x !== s; }); };
+    book.getSheets = function () { return this.sheets.slice(); };
+    book.getId = function () { return '1TestSheetId'; };
+  }
 
-  var propsStore = {};
+  var propsStore = opts.props || {};
   var sandbox = {
     console: console, Date: Date, JSON: JSON, Math: Math, String: String, Number: Number, Array: Array, Object: Object,
     isFinite: isFinite, Error: Error, RegExp: RegExp,
@@ -84,7 +114,8 @@ function makeServer(opts) {
     }
   };
   vm.createContext(sandbox);
-  vm.runInContext(fs.readFileSync(path.join(ROOT, 'server', 'scoreboard.gs'), 'utf8'), sandbox, { filename: 'scoreboard.gs' });
+  var file = opts.file || path.join(ROOT, 'server', 'scoreboard.gs');
+  vm.runInContext(fs.readFileSync(file, 'utf8'), sandbox, { filename: path.basename(file) });
 
 
   return {

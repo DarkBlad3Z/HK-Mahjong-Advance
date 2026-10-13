@@ -568,6 +568,11 @@
   }
 
   function fmtInt(n) { n = Math.round(Number(n) || 0); return (n < 0 ? '-' : '') + String(Math.abs(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+  function fmtShortDate(isoStr) {
+    var d = new Date(isoStr);
+    if (isNaN(d.getTime())) return '';
+    return ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()] + ' ' + d.getDate();
+  }
   function fmtDate(isoStr) {
     var d = new Date(isoStr);
     if (!isoStr || isNaN(d.getTime())) return '';
@@ -576,18 +581,57 @@
   }
   var LB_TABS = [['board', 'Leaderboard 排行榜'], ['hall', 'Hall of Fame 名人堂'], ['hands', 'Special hands 牌型'], ['mine', 'My games 我的']];
 
-  function lbBoard(d, me) {
-    var players = d.players || [];
-    if (!players.length) return '<p class="lb-empty">No players yet. Sign in, play a game, and you will be first on the board.</p>';
-    var head = ['#', 'Player', 'Games', '1st', 'Win rate', 'Total score', 'Average', 'Best game', 'Hands won', 'Self-picks', 'Biggest (Fan)', 'Limit hands'];
-    var rows = players.map(function (p) {
-      return '<tr class="' + (me && p.name.toLowerCase() === me.toLowerCase() ? 'lb-me' : '') + '"><td>' + p.rank + '</td><td class="lb-name">' + esc(p.name) + '</td>' +
-        '<td>' + p.games + '</td><td>' + p.firsts + '</td><td>' + Math.round((p.winRate || 0) * 100) + '%</td>' +
-        '<td class="lb-strong">' + fmtInt(p.totalScore) + '</td><td>' + fmtInt(p.avgScore) + '</td><td>' + fmtInt(p.bestGame) + '</td>' +
-        '<td>' + p.handsWon + '</td><td>' + p.selfPicks + '</td><td>' + (p.biggestFan || '') + '</td><td>' + (p.limitHands || '') + '</td></tr>';
+  var LB_LEVELS = [['all', 'All levels 全部'], ['easy', 'Easy 簡單'], ['normal', 'Normal 普通'], ['hard', 'Hard 困難']];
+  function pct(x) { return Math.round((Number(x) || 0) * 100) + '%'; }
+  function plus(n) { n = Number(n) || 0; return (n > 0 ? '+' : '') + fmtInt(n); }
+  function wl(w, l) { return (w || 0) + '–' + (l || 0); }
+  function wld(s) { return (s.handWins || 0) + '–' + (s.handsLost || 0) + '–' + (s.handsDrawn || 0); }
+  function levelName(level) { var l = LB_LEVELS.filter(function (x) { return x[0] === level; })[0]; return l ? l[1].split(' ')[0] : ''; }
+  /** True when the scoreboard script is version 2 or newer (it logs every hand and the computer level). */
+  function hasHandLog(d) { return (d.players || []).some(function (p) { return p.handsPlayed !== undefined; }); }
+  /** A player's numbers for one computer level; 'all' is every game. */
+  function statsAt(p, level) {
+    if (!level || level === 'all') return p;
+    var s = (p.byLevel && p.byLevel[level]) || {}, out = { name: p.name };
+    Object.keys(s).forEach(function (k) { out[k] = s[k]; });
+    return out;
+  }
+  function levelPills(level) {
+    return '<div class="lb-levels" role="group" aria-label="Computer level">' + LB_LEVELS.map(function (l) {
+      return '<button type="button" class="lb-level' + ((level || 'all') === l[0] ? ' active' : '') + '" data-action="leaderboard-level" data-level="' + l[0] + '"' +
+        ' aria-pressed="' + ((level || 'all') === l[0]) + '">' + l[1] + '</button>';
+    }).join('') + '</div>';
+  }
+
+  function lbBoard(d, me, level) {
+    level = level || 'all';
+    var pills = levelPills(level), v2 = hasHandLog(d);
+    if (level !== 'all' && !v2) {
+      return pills + '<p class="lb-empty">Results by computer level start once the scoreboard script is updated to version 2.</p>';
+    }
+    var list = (d.players || []).map(function (p) { return statsAt(p, level); });
+    if (level !== 'all') {
+      list = list.filter(function (s) { return s.games > 0 || s.handsPlayed > 0; });
+      list.sort(function (a, b) { return (b.totalScore - a.totalScore) || (b.firsts - a.firsts) || (b.handWins - a.handWins) || (a.name < b.name ? -1 : 1); });
+      list.forEach(function (s, i) { s.rank = i + 1; });
+    }
+    if (!list.length) {
+      return pills + '<p class="lb-empty">' + (level === 'all' ? 'No players yet. Sign in, play a game, and you will be first on the board.'
+        : 'Nobody has played against ' + levelName(level) + ' computer players yet.') + '</p>';
+    }
+    var head = ['#', 'Player', 'Games W–L', 'Win rate', 'Total score', 'Average', 'Best game', 'Hands W–L–D', 'Hand win %', 'Self-picks', 'Dealt in', 'Biggest (Fan)'];
+    var rows = list.map(function (s) {
+      var logged = s.handsPlayed !== undefined, none = '–';
+      return '<tr class="' + (me && s.name.toLowerCase() === me.toLowerCase() ? 'lb-me' : '') + '"><td>' + s.rank + '</td><td class="lb-name">' + esc(s.name) + '</td>' +
+        '<td>' + wl(s.firsts, (s.games || 0) - (s.firsts || 0)) + '</td><td>' + pct(s.winRate) + '</td>' +
+        '<td class="lb-strong">' + fmtInt(s.totalScore) + '</td><td>' + fmtInt(s.avgScore) + '</td><td>' + fmtInt(s.bestGame) + '</td>' +
+        '<td>' + (logged ? wld(s) : none) + '</td><td>' + (logged ? pct(s.handWinRate) : none) + '</td>' +
+        '<td>' + (s.selfPicks || 0) + '</td><td>' + (logged ? (s.dealtIn || 0) : none) + '</td><td>' + (s.biggestFan || '') + '</td></tr>';
     }).join('');
-    return '<div class="lb-scroll"><table class="lb-table"><thead><tr>' + head.map(function (h) { return '<th>' + h + '</th>'; }).join('') +
-      '</tr></thead><tbody>' + rows + '</tbody></table></div><p class="lb-foot">Ranked by total score across all saved games.</p>';
+    var foot = (level === 'all' ? 'All games, ranked by total score.' : 'Games against ' + levelName(level) + ' computer players, ranked by total score.') +
+      ' A game is a win when you finish 1st. Hands W–L–D: hands won, lost and drawn. Dealt in: hands lost on your discard.';
+    return pills + '<div class="lb-scroll"><table class="lb-table"><thead><tr>' + head.map(function (h) { return '<th>' + h + '</th>'; }).join('') +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div><p class="lb-foot">' + foot + '</p>';
   }
   // "1 games" -> "1 game"; Fan stays as it is
   function unitFor(value, unit) {
@@ -629,21 +673,45 @@
     var t = n % 100, suf = (t >= 11 && t <= 13) ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
     return n + suf;
   }
+  function resultTag(res) {
+    var k = /^win/i.test(res) ? 'win' : /^(loss|dealt)/i.test(res) ? 'loss' : 'draw';
+    return '<span class="res res-' + k + '">' + esc(res || '') + '</span>';
+  }
   function lbMine(d, me) {
     if (!me) return '<p class="lb-empty">Sign in to see your own games here. <button type="button" class="link-btn" data-action="open-login">Sign in</button></p>';
     var p = (d.players || []).filter(function (x) { return x.name.toLowerCase() === me.toLowerCase(); })[0];
-    var summary = p ? '<div class="mine-summary"><span>Rank <strong>#' + p.rank + '</strong></span><span>Games <strong>' + p.games + '</strong></span>' +
-      '<span>1st places <strong>' + p.firsts + '</strong></span><span>Total <strong>' + fmtInt(p.totalScore) + '</strong></span>' +
-      '<span>Hands won <strong>' + p.handsWon + '</strong></span><span>Biggest <strong>' + (p.biggestFan || 0) + ' Fan</strong></span></div>' : '';
+    var v2 = hasHandLog(d);
+    var summary = p ? '<div class="mine-summary"><span>Rank <strong>#' + p.rank + '</strong></span>' +
+      '<span>Games W–L <strong>' + wl(p.firsts, p.games - p.firsts) + '</strong></span>' +
+      (v2 ? '<span>Hands W–L–D <strong>' + wld(p) + '</strong></span><span>Dealt in <strong>' + (p.dealtIn || 0) + '</strong></span>'
+        : '<span>Hands won <strong>' + p.handsWon + '</strong></span>') +
+      '<span>Total <strong>' + fmtInt(p.totalScore) + '</strong></span>' +
+      '<span>Biggest <strong>' + (p.biggestFan || 0) + ' Fan</strong></span></div>' : '';
+    var levels = (p && p.byLevel) ? '<div class="mine-levels">' + LB_LEVELS.slice(1).map(function (l) {
+      var s = p.byLevel[l[0]] || {};
+      return '<span><strong>' + levelName(l[0]) + '</strong> games ' + wl(s.firsts, (s.games || 0) - (s.firsts || 0)) + ' · hands ' + wld(s) + '</span>';
+    }).join('') + '</div>' : '';
     var games = (d.myGames || []).map(function (g) {
-      return '<tr><td>' + fmtDate(g.time) + '</td><td>' + ordinal(g.place) + '</td><td class="lb-strong">' + fmtInt(g.score) + '</td><td>' + g.handsWon + ' of ' + g.hands + '</td></tr>';
+      return '<tr><td>' + fmtDate(g.time) + '</td><td>' + esc(g.level || '') + '</td><td>' + ordinal(g.place) + '</td><td>' +
+        resultTag(g.result || (g.place === 1 ? 'Win' : 'Loss')) + '</td><td class="lb-strong">' + fmtInt(g.score) + '</td><td>' + g.handsWon + ' of ' + g.hands + '</td></tr>';
+    }).join('');
+    var hands = (d.myHands || []).map(function (h) {
+      var who = String(h.winner || 'Someone').replace(/ \(computer\)$/, '');
+      var how = h.how === 'Self-pick' ? ' by self-pick' : h.how === 'Discard' ? (h.dealtIn ? ' on your discard' : ' on a discard') : h.how ? ' by ' + h.how.toLowerCase() : '';
+      var detail = h.result === 'Win' ? (h.scoring || h.how) : h.result === 'Loss' ? who + ' won' + how + (h.scoring ? ' · ' + h.scoring : '') : 'Nobody won';
+      return '<tr><td>' + fmtShortDate(h.time) + '</td><td>' + esc(h.level || '') + '</td><td>' + resultTag(h.dealtIn ? 'Dealt in' : h.result) + '</td><td>' +
+        (h.result === 'Draw' ? '' : h.fan) + '</td><td class="lb-strong">' + plus(h.points) + '</td><td class="lb-left">' + esc(detail) + '</td></tr>';
     }).join('');
     var wins = (d.myWins || []).map(function (w) {
-      return '<tr><td>' + fmtDate(w.time) + '</td><td>' + w.fan + '</td><td>' + esc(w.how) + '</td><td class="lb-left">' + esc(w.scoring) + '</td></tr>';
+      return '<tr><td>' + fmtDate(w.time) + '</td><td>' + esc(w.level || '') + '</td><td>' + w.fan + '</td><td>' + esc(w.how) + '</td><td class="lb-left">' + esc(w.scoring) + '</td></tr>';
     }).join('');
-    return summary +
-      '<h3 class="lb-sub">Recent games</h3>' + (games ? '<table class="lb-table"><thead><tr><th>Date</th><th>Place</th><th>Score</th><th>Hands won</th></tr></thead><tbody>' + games + '</tbody></table>' : '<p class="lb-empty">No finished games yet.</p>') +
-      '<h3 class="lb-sub">Recent wins</h3>' + (wins ? '<table class="lb-table"><thead><tr><th>Date</th><th>Fan</th><th>How</th><th class="lb-left">Scoring</th></tr></thead><tbody>' + wins + '</tbody></table>' : '<p class="lb-empty">No wins yet.</p>');
+    return summary + levels +
+      '<h3 class="lb-sub">Recent games</h3>' + (games ? '<table class="lb-table"><thead><tr><th>Date</th><th>Level</th><th>Place</th><th>Result</th><th>Score</th><th>Hands won</th></tr></thead><tbody>' + games + '</tbody></table>'
+        : '<p class="lb-empty">No finished games yet.</p>') +
+      (v2 ? '<h3 class="lb-sub">Recent hands</h3>' + (hands ? '<table class="lb-table"><thead><tr><th>Date</th><th>Level</th><th>Result</th><th>Fan</th><th>Points</th><th class="lb-left">What happened</th></tr></thead><tbody>' + hands + '</tbody></table>'
+        : '<p class="lb-empty">No hands yet.</p>') : '') +
+      '<h3 class="lb-sub">Recent wins</h3>' + (wins ? '<table class="lb-table"><thead><tr><th>Date</th><th>Level</th><th>Fan</th><th>How</th><th class="lb-left">Scoring</th></tr></thead><tbody>' + wins + '</tbody></table>'
+        : '<p class="lb-empty">No wins yet.</p>');
   }
   function renderLeaderboardModal(m, online) {
     var me = online && online.user;
@@ -653,7 +721,7 @@
     else if (m.error && !m.data) body = '<div class="login-error" role="alert">' + esc(m.error) + '</div>';
     else {
       var d = m.data || {};
-      body = m.tab === 'hall' ? lbHall(d) : m.tab === 'hands' ? lbHands(d, me) : m.tab === 'mine' ? lbMine(d, me) : lbBoard(d, me);
+      body = m.tab === 'hall' ? lbHall(d) : m.tab === 'hands' ? lbHands(d, me) : m.tab === 'mine' ? lbMine(d, me) : lbBoard(d, me, m.level);
     }
     return '<div class="modal-overlay"><div class="modal leaderboard-modal" data-role="leaderboard-modal">' +
       '<div class="modal-head"><h2 class="modal-title">Scoreboard 計分榜</h2><button type="button" class="btn btn-icon" data-action="close-modal">✕</button></div>' +
@@ -891,6 +959,15 @@
         (fl ? '<span class="revealed-flowers">' + fl + '</span>' : '') + '</div>';
     }).join('') + '</div>';
   }
+  /** Your own result for the hand, shown under the title: Win / Loss (and whether you dealt in) with your points. */
+  function myHandResult(view) {
+    var r = view.result;
+    if (!r || r.type === 'draw') return '<div class="my-result my-result-draw">Draw 和 · nobody won</div>';
+    var pts = (r.payments || [])[0] || 0;
+    if (r.winner === 0) return '<div class="my-result my-result-win">Win 贏 · ' + esc(signed(pts)) + '</div>';
+    var dealt = r.payer === 0 && (r.source === 'discard' || r.source === 'robKong');
+    return '<div class="my-result my-result-loss">Loss 輸' + (dealt ? ' · you dealt in' : '') + (pts ? ' · ' + esc(signed(pts)) : '') + '</div>';
+  }
   function renderHandResult(view) {
     var r = view.result;
     var title = resultTitle(view);
@@ -898,7 +975,7 @@
       ? ('<div class="result-sub">' + esc(title.sub) + '</div>' + revealedHandsRow(view))
       : (winningHandDisplay(view) + fanTable(r.evaluation) + paymentLines(view) + scoresAfterRow(view) + revealedHandsRow(view));
     return '<div class="modal-overlay"><div class="modal result-modal">' +
-      '<h2 class="modal-title">' + esc(title.en) + ' <span class="zh">' + esc(title.zh) + '</span></h2>' +
+      '<h2 class="modal-title">' + esc(title.en) + ' <span class="zh">' + esc(title.zh) + '</span></h2>' + myHandResult(view) +
       body + nextDealLine(view) +
       '<div class="modal-actions"><button type="button" class="btn btn-brass" data-action="next-hand">Next hand 下一局</button></div>' +
       '</div></div>';
@@ -916,8 +993,12 @@
       return '<div class="standing-row' + (s.index === 0 ? ' is-you' : '') + '"><span class="standing-rank">#' + s.rank + '</span>' +
         '<span class="standing-name">' + esc(s.index === 0 ? 'You' : s.name) + '</span><span class="standing-score">' + s.score + '</span></div>';
     }).join('');
+    var mine = standings.filter(function (s) { return s.index === 0; })[0];
+    var headline = !mine ? '' : (mine.rank === 1
+      ? '<div class="my-result my-result-win gameover-result">Win 贏 · you finished 1st</div>'
+      : '<div class="my-result my-result-loss gameover-result">Loss 輸 · you finished ' + ordinal(mine.rank) + '</div>');
     return '<div class="modal-overlay"><div class="modal gameover-modal">' +
-      '<h2 class="modal-title">Game Over 結束</h2>' +
+      '<h2 class="modal-title">Game Over 結束</h2>' + headline +
       '<div class="standings">' + rows + '</div>' + saved +
       '<div class="modal-actions"><button type="button" class="btn btn-brass" data-action="request-new-game">New Game 新局</button></div>' +
       '</div></div>';

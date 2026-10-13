@@ -1,15 +1,21 @@
 # Online scoreboard (optional)
 
 The game can save everyone's results to a Google Sheet that your group shares. Players sign in with a name and a
-password; every hand they win and every game they finish is recorded. In the game, **Leaderboard 排行榜** then shows:
+password; every hand they play (win, loss or draw) and every game they finish is recorded, together with the computer
+level (Easy, Normal or Hard). In the game, **Leaderboard 排行榜** then shows:
 
-- **Leaderboard**: everyone ranked by total score, with games played, 1st places, win rate, best game, hands won,
-  self-picks, biggest hand and limit hands
-- **Hall of Fame**: the record holders (top scorer, best single game, biggest hand, most games won, most hands won,
-  most limit hands, most self-picks, chicken champion) and the champion of each special hand, plus who won it first
+- **Leaderboard**: everyone ranked by total score, with games won–lost, win rate, average, best game, hands
+  won–lost–drawn, hand win rate, self-picks, times dealt in and biggest hand. Buttons switch between all games and
+  games against Easy, Normal or Hard computer players.
+- **Hall of Fame**: the record holders (top scorer, best single game, biggest hand, most games won overall and on each
+  level, most hands won, most limit hands, most self-picks, chicken champion) and the champion of each special hand,
+  plus who won it first
 - **Special hands**: how many times each player has won with Full Flush, All Terminals, Thirteen Orphans and
   26 other hands
-- **My games**: your recent games and wins
+- **My games**: your record on each level, and your recent games, hands and wins
+
+A game counts as a win when you finish 1st. After every hand the game shows your Win or Loss (and whether you dealt
+in), and the game-over screen shows the game's Win or Loss.
 
 The sheet has the same numbers on its **Leaderboard** and **Hall of Fame** tabs, so people can look without opening
 the game.
@@ -89,9 +95,10 @@ Reload the game. The start screen now shows **Leaderboard 排行榜** and **Sign
 | Tab | One row per… | Columns |
 |---|---|---|
 | **Players** | player | name, joined, last seen |
-| **Wins** | hand a player wins | time, player, game, hand number, Fan, points won, how (discard, self-pick, robbing the Kong…), the full scoring breakdown, hand IDs, limit hand, chicken hand |
-| **Games** | finished game | time, player, final score, place, hands played and won, self-picks, biggest win, minimum Fan, game length, computer level |
-| **Stats** | player | formulas: totals, averages, records and one column per special hand |
+| **Wins** | hand a player wins | time, player, game, hand number, Fan, points won, how (discard, self-pick, robbing the Kong…), the full scoring breakdown, hand IDs, limit hand, chicken hand, computer level |
+| **Hands** | hand a player plays to the end | time, player, game, hand number, result (Win, Loss or Draw), dealt in, winner, how, Fan, points won or lost, computer level, how the winning hand scored |
+| **Games** | finished game | time, player, final score, place, hands played and won, self-picks, biggest win, minimum Fan, game length, computer level, result (Win or Loss) |
+| **Stats** | player | formulas: totals, averages, records, one column per special hand, hands won–lost–drawn, and the main numbers for each computer level |
 | **Leaderboard** | player | Stats sorted by total score |
 | **Hall of Fame** | record / hand | record holders and hand champions (formulas) |
 
@@ -117,8 +124,8 @@ Use the **Mahjong scoreboard** menu in the sheet:
 
 - **Reset a player's password…**: for someone who forgot their password. Their scores stay. Next time they type the
   same name with a new password and click **Create account**.
-- **Set up or repair the tabs**: recreates any tab that was deleted and adds a Stats row for any player who is missing
-  one. It's safe to run at any time and doesn't delete records.
+- **Set up or repair the tabs**: rebuilds the headers, formulas and formatting, recreates any tab that was deleted,
+  and adds a Stats row for any player who is missing one. It's safe to run at any time and doesn't delete records.
 
 To correct a mistake, edit or delete rows on **Wins** or **Games**. Stats, Leaderboard and Hall of Fame update by
 themselves, and so does the game's leaderboard.
@@ -130,11 +137,18 @@ To remove a test player, delete their rows on **Players**, **Wins**, **Games** a
 
 If you paste in a newer `scoreboard.gs`, publish it as a new version of the same deployment. That keeps the URL:
 
-1. **Deploy → Manage deployments**.
-2. Select the deployment and click the pencil icon.
-3. Under **Version**, choose **New version**, then click **Deploy**.
+1. In the sheet, open **Extensions → Apps Script**, replace everything in `Code.gs` with the new file, and click **Save**.
+2. Choose **setup** in the function list and click **Run**. This rebuilds the tabs for the new version right away.
+   (If you skip it, the first request from the game does the same.) Records are never deleted.
+3. **Deploy → Manage deployments**, select the deployment and click the pencil icon.
+4. Under **Version**, choose **New version**, then click **Deploy**.
 
 If you use **New deployment** instead, Google creates a new URL, and you have to paste that URL into the game again.
+
+**From version 1 to version 2:** version 1's setup stopped part way on a new sheet (Google gives new tabs 26 columns
+and the Stats tab needs more), so the Stats and Leaderboard tabs stayed empty. Players, Games and Wins were still saved.
+Version 2 adds the columns it needs, fills in the Stats, Leaderboard and Hall of Fame tabs, adds the Hands tab with a
+row for every win already saved, and adds the computer level and Win/Loss to earlier records where it can.
 
 ## If something doesn't work
 
@@ -143,6 +157,7 @@ If you use **New deployment** instead, Google creates a new URL, and you have to
 | No **Leaderboard** or **Sign in** button | The URL in `index.html` must start with `https://script.google.com/` and end with `/exec`, inside the quotes. Reload the page. |
 | "Could not reach the scoreboard" | Check the internet connection. In **Manage deployments**, check that **Who has access** is **Anyone**. |
 | "The scoreboard is not set up yet" | Run **setup** once in Apps Script (step 3). |
+| "The coordinates of the range are outside the dimensions of the sheet" | The sheet still runs version 1 of the script. Update it (see "Updating the script later"). |
 | A script change doesn't show up | Publish a new version (see "Updating the script later"). |
 | "Please sign in again to save your scores" | The password was reset. Sign in again, or create the account again with the same name. |
 | Nothing saved after a game | Check that you were signed in. The game-over screen says whether the game was saved. |

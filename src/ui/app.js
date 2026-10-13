@@ -393,7 +393,7 @@
       addCallout(evt.player, chicken ? '雞糊! 🐔' : calloutTextForWin(evt.result));
       trackWin(evt);
     }
-    else if (evt.type === 'handEnd') trackHandEnd();
+    else if (evt.type === 'handEnd') trackHandEnd(evt);
     else if (evt.type === 'gameEnd') trackGameEnd(evt);
     else if (evt.type === 'blockedWin' && evt.player === 0) {
       var tileName = (evt.tile != null && HKMJ.Tiles) ? (HKMJ.Tiles.name(evt.tile) + ' ' + HKMJ.Tiles.zh(evt.tile) + ' completes your hand, but') : 'Winning shape, but';
@@ -402,8 +402,9 @@
     }
   }
   // ------------------------------------------------------------------ online scoreboard (src/ui/online.js)
-  // Each game gets an id and running counts (kept with the save, so Continue resumes them). Wins by you and the final
-  // result are sent to the scoreboard when you are signed in; debug autoplay never records anything.
+  // Each game gets an id and running counts (kept with the save, so Continue resumes them). When you are signed in,
+  // every hand you play (win, loss or draw), the scoring of each hand you win, and the final result are sent to the
+  // scoreboard with the game's computer level; debug autoplay never records anything.
   var META_KEY = 'hkmj.gameMeta.v1', gameMeta = null;
   function newGameMeta() {
     return { gameId: 'g' + Date.now().toString(36) + Math.floor(Math.random() * 1e8).toString(36), hands: 0, handsWon: 0, selfPicks: 0, biggestFan: 0, recorded: false };
@@ -425,9 +426,33 @@
     var O = onlineApi();
     if (!O || !O.user()) return;
     O.recordWin({ gameId: gameMeta.gameId, handNo: r.handNo, fan: fan, points: (r.payments || [])[0] || 0, source: r.source,
-      items: (ev.items || []).map(function (i) { return { id: i.id, name: i.name, fan: i.fan }; }), chicken: isChickenHand(r) });
+      items: scoringItems(ev), chicken: isChickenHand(r), aiLevel: gameLevel() });
   }
-  function trackHandEnd() { if (!gameMeta || autoplayOn) return; gameMeta.hands++; saveMeta(); }
+  function scoringItems(ev) { return ((ev && ev.items) || []).map(function (i) { return { id: i.id, name: i.name, fan: i.fan }; }); }
+  /** The computer level this game is played at (the engine keeps it fixed for the whole game). */
+  function gameLevel() {
+    try { var v = G && G.getView(0); if (v && v.settings && v.settings.aiLevel) return v.settings.aiLevel; } catch (e) { /* fall through */ }
+    return (state.settings && state.settings.aiLevel) || 'normal';
+  }
+  /** Win, loss or draw for you, from a hand's result (the 'handEnd' event). */
+  function handOutcome(r) {
+    if (!r || r.type === 'draw' || r.winner === null || r.winner === undefined) return { result: 'draw', dealtIn: false };
+    if (r.winner === 0) return { result: 'win', dealtIn: false };
+    return { result: 'loss', dealtIn: r.payer === 0 && (r.source === 'discard' || r.source === 'robKong') };
+  }
+  function trackHandEnd(evt) {
+    if (!gameMeta || autoplayOn) return;
+    gameMeta.hands++; saveMeta();
+    var O = onlineApi();
+    if (!O || !O.user()) return;
+    var r = (evt && evt.result) || {}, out = handOutcome(r), winner = '';
+    if (out.result === 'loss') {
+      try { winner = G.getView(0).players[r.winner].name + ' (computer)'; } catch (e) { winner = 'Computer'; }
+    }
+    O.recordHand({ gameId: gameMeta.gameId, handNo: r.handNo, result: out.result, dealtIn: out.dealtIn, winner: winner,
+      source: r.source, fan: r.fan || (r.evaluation && r.evaluation.fan) || 0, points: (r.payments || [])[0] || 0,
+      items: out.result === 'draw' ? [] : scoringItems(r.evaluation), aiLevel: gameLevel() });
+  }
   function trackGameEnd(evt) {
     if (!gameMeta || autoplayOn || gameMeta.recorded) return;
     var me = (evt.standings || []).filter(function (s) { return s.index === 0; })[0];
@@ -437,10 +462,11 @@
     if (!O || !O.user()) return;
     var set = {}; try { set = G.getView(0).settings || {}; } catch (e) { set = state.settings || {}; }
     O.recordGame({ gameId: gameMeta.gameId, score: me.score, place: me.rank, hands: gameMeta.hands, handsWon: gameMeta.handsWon,
-      selfPicks: gameMeta.selfPicks, biggestFan: gameMeta.biggestFan, minFan: set.minFan, rounds: set.rounds, aiLevel: set.aiLevel });
+      selfPicks: gameMeta.selfPicks, biggestFan: gameMeta.biggestFan, minFan: set.minFan, rounds: set.rounds, aiLevel: set.aiLevel || gameLevel() });
   }
+  var boardLevel = 'all';   // the Easy / Normal / Hard filter is remembered while the app is open
   function openLeaderboard(tab) {
-    state.modal = { type: 'leaderboard', tab: tab || 'board', loading: true, data: null, error: null };
+    state.modal = { type: 'leaderboard', tab: tab || 'board', level: boardLevel, loading: true, data: null, error: null };
     render();
     loadLeaderboard();
   }
@@ -526,8 +552,9 @@
     catch (e) { console.error('HKMJ: getView/getActions failed', e); return; }
     if (!actions.length) return;
     // Player 0 only ever reaches here under debug autoplay (see HKMJ.App.debug below); it always decides at
-    // the fixed 'normal' level, independent of the configured aiLevel used for the three computer players.
-    var level = (p === 0) ? 'normal' : state.settings.aiLevel;
+    // the fixed 'normal' level. The computer players use the game's level, which stays the same for the whole game
+    // (a level changed in Settings starts with the next game), so the scoreboard's Easy / Normal / Hard is exact.
+    var level = (p === 0) ? 'normal' : ((view.settings && view.settings.aiLevel) || state.settings.aiLevel);
     try { action = HKMJ.AI.decide(view, actions, { level: level }); }
     catch (e) { console.error('HKMJ: AI.decide failed', e); action = safeFallback(actions); }
     try { res = G.act(p, action); } catch (e) { res = { ok: false, error: String(e) }; }
@@ -853,6 +880,9 @@
       case 'open-leaderboard': openLeaderboard('board'); return;
       case 'leaderboard-tab': if (state.modal && state.modal.type === 'leaderboard') { state.modal.tab = el.getAttribute('data-tab'); render(); } return;
       case 'leaderboard-refresh': if (state.modal && state.modal.type === 'leaderboard') { state.modal.loading = true; render(); loadLeaderboard(); } return;
+      case 'leaderboard-level':
+        if (state.modal && state.modal.type === 'leaderboard') { boardLevel = state.modal.level = el.getAttribute('data-level') || 'all'; render(); }
+        return;
       case 'settings-save': {
         var draft = state.modal.draft;
         if (state.modal.forNewGame) { startNewGame(draft); return; }

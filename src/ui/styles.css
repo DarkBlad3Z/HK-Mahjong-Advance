@@ -485,3 +485,20 @@ button.tile { border: 1px solid rgba(0,0,0,0.15); }
 .hof-detail { font-size: 12px; color: #7a6f52; margin-top: 4px; }
 .mine-summary { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 15px; background: #fff; border: 1px solid var(--paper-border); border-radius: 8px; padding: 10px 12px; }
 .btn.btn-board { background: #274b3d; }
+
+/* ------------------------------------------------------------------ results by level, win / loss badges */
+.lb-levels { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 10px; }
+.lb-level { font: inherit; font-size: 13px; padding: 5px 13px; border-radius: 999px; border: 1.5px solid var(--paper-border); background: #fff; color: #3a3220; cursor: pointer; }
+.lb-level:hover { border-color: #1f5b45; }
+.lb-level.active { background: #1f5b45; border-color: #1f5b45; color: #fff; font-weight: 700; }
+.my-result { display: inline-block; margin: 0 0 10px; padding: 4px 16px; border-radius: 999px; font-weight: 800; font-size: 16px; letter-spacing: 0.01em; }
+.my-result-win { background: #1f7a4d; color: #fff; }
+.my-result-loss { background: #9b2c22; color: #fff; }
+.my-result-draw { background: #6b6249; color: #fff; }
+.gameover-modal .gameover-result { display: block; text-align: center; margin: 0 auto 12px; width: fit-content; }
+.res { display: inline-block; padding: 1px 9px; border-radius: 999px; font-weight: 700; font-size: 12px; white-space: nowrap; }
+.res-win { background: #d9f0e2; color: #1b5e3b; }
+.res-loss { background: #f7dcd8; color: #8c1d18; }
+.res-draw { background: #ece4cf; color: #5a5038; }
+.mine-levels { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 14px; color: #4d4430; margin: 10px 2px 2px; }
+.lb-table td.lb-left { min-width: 180px; }
